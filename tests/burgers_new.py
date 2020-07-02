@@ -8,7 +8,7 @@ from multitaskpinn.model.func_approx import NN
 from multitaskpinn.model.library import Library1D
 from multitaskpinn.model.constraint import LeastSquares
 from multitaskpinn.model.sparse_estimators import Clustering, Threshold
-from multitaskpinn.training import train
+from multitaskpinn.training import train_optim
 from multitaskpinn.training.sparsity_scheduler import Periodic
 from phimal_utilities.data import Dataset
 from phimal_utilities.data.burgers import BurgersDelta
@@ -39,8 +39,10 @@ library = Library1D(poly_order=2, diff_order=3) # Library function
 estimator = Clustering() # Sparse estimator 
 constraint = LeastSquares() # How to constrain
 model = DeepMoD(network, library, estimator, constraint) # Putting it all in the model
+model.s = torch.nn.Parameter(torch.zeros(2))
 
 # Running model
-sparsity_scheduler = Periodic(initial_epoch=8000, periodicity=100) # Defining when to apply sparsity
-optimizer = torch.optim.Adam(model.parameters(), betas=(0.99, 0.99), amsgrad=True) # Defining optimizer
-train(model, X_train, y_train, optimizer, sparsity_scheduler, max_iterations=5000, patience=500, delta=0.01) # Running
+sparsity_scheduler = Periodic(initial_epoch=12000, periodicity=100) # Defining when to apply sparsity
+optimizer = torch.optim.Adam(model.parameters(), betas=(0.99, 0.999), amsgrad=True) # Defining optimizer
+train_optim(model, X_train, y_train, optimizer, sparsity_scheduler, max_iterations=10000, patience=500, delta=0.0001) # Running
+print(model.s)
