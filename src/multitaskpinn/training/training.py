@@ -1,13 +1,34 @@
 import torch
 import time
 from math import pi
+import numpy as np
 
-from deepymod_torch.utils.tensorboard import Tensorboard
-from deepymod_torch.utils.output import progress
-from deepymod_torch.training.convergence import Convergence
+from ..utils.tensorboard import Tensorboard
+from ..utils.output import progress
+from .convergence import Convergence
+from ..model.deepmod import DeepMoD
+from typing import Optional
 
-def train(model, data, target, optimizer, sparsity_scheduler, log_dir=None, max_iterations=10000, **convergence_kwargs):
-    '''Function to train model.'''
+
+def train(model: DeepMoD,
+          data: torch.Tensor,
+          target: torch.Tensor,
+          optimizer,
+          sparsity_scheduler,
+          log_dir: Optional[str] = None,
+          max_iterations: int = 10000,
+          **convergence_kwargs) -> None:
+    """[summary]
+
+    Args:
+        model (DeepMoD): [description]
+        data (torch.Tensor): [description]
+        target (torch.Tensor): [description]
+        optimizer ([type]): [description]
+        sparsity_scheduler ([type]): [description]
+        log_dir (Optional[str], optional): [description]. Defaults to None.
+        max_iterations (int, optional): [description]. Defaults to 10000.
+    """
     start_time = time.time()
     number_of_terms = [coeff_vec.shape[0] for coeff_vec in model(data)[3]]
     board = Tensorboard(number_of_terms, log_dir)  # initializing custom tb board
@@ -15,14 +36,14 @@ def train(model, data, target, optimizer, sparsity_scheduler, log_dir=None, max_
     # Training
     convergence = Convergence(**convergence_kwargs)
     print('| Iteration | Progress | Time remaining |     Loss |      MSE |      Reg |    L1 norm |')
-    for iteration in torch.arange(0, max_iterations + 1):
+    for iteration in np.arange(0, max_iterations + 1):
         # ================== Training Model ============================
         prediction, time_derivs, sparse_thetas, thetas, constraint_coeffs = model(data)
-        
+
         MSE = torch.mean((prediction - target)**2, dim=0)  # loss per output
         Reg = torch.stack([torch.mean((dt - theta @ coeff_vector)**2)
                            for dt, theta, coeff_vector in zip(time_derivs, sparse_thetas, constraint_coeffs)])
-        loss = torch.sum(2 * torch.log(2 * pi * MSE) + Reg / (MSE + 1e-5))  # 1e-5 for numerical stability
+        loss = torch.sum(2 * torch.log(2 * pi * MSE) + Reg / (MSE + 1e-6))  # 1e-5 for numerical stability
 
         # Optimizer step
         optimizer.zero_grad()
@@ -40,9 +61,9 @@ def train(model, data, target, optimizer, sparsity_scheduler, log_dir=None, max_
             constraint_coeff_vectors = [torch.zeros(mask.size()).masked_scatter_(mask, coeff_vector.detach().squeeze())
                                         for mask, coeff_vector
                                         in zip(model.constraint.sparsity_masks, constraint_coeffs)]
-            unscaled_constraint_coeff_vectors = [torch.zeros(mask.size()).masked_scatter_(mask, coeff_vector.detach().squeeze()) / model.library.norm.squeeze()
-                                                 for mask, coeff_vector
-                                                 in zip(model.constraint.sparsity_masks, constraint_coeffs)]
+            unscaled_constraint_coeff_vectors = [torch.zeros(mask.size()).masked_scatter_(mask, coeff_vector.detach().squeeze()) / norm.squeeze()
+                                                 for mask, coeff_vector, norm
+                                                 in zip(model.constraint.sparsity_masks, constraint_coeffs, model.library.norms)]
 
             board.write(iteration, loss, MSE, Reg, l1_norm, constraint_coeff_vectors, unscaled_constraint_coeff_vectors)
 
@@ -53,7 +74,7 @@ def train(model, data, target, optimizer, sparsity_scheduler, log_dir=None, max_
             with torch.no_grad():
                 model.constraint.sparsity_masks = model.sparse_estimator(thetas, time_derivs)
                 sparsity_scheduler.reset()
-                print(model.constraint.sparsity_masks)
+                #print(model.constraint.sparsity_masks)
 
         # Checking convergence
         convergence(iteration, torch.sum(l1_norm))
@@ -64,8 +85,25 @@ def train(model, data, target, optimizer, sparsity_scheduler, log_dir=None, max_
     board.close()
 
 
-def train_optim(model, data, target, optimizer, sparsity_scheduler, log_dir=None, max_iterations=10000, **convergence_kwargs):
-    '''Function to train model.'''
+def train_multitask(model: DeepMoD,
+                    data: torch.Tensor,
+                    target: torch.Tensor,
+                    optimizer,
+                    sparsity_scheduler,
+                    log_dir: Optional[str] = None,
+                    max_iterations: int = 10000,
+                    **convergence_kwargs) -> None:
+    """[summary]
+
+    Args:
+        model (DeepMoD): [description]
+        data (torch.Tensor): [description]
+        target (torch.Tensor): [description]
+        optimizer ([type]): [description]
+        sparsity_scheduler ([type]): [description]
+        log_dir (Optional[str], optional): [description]. Defaults to None.
+        max_iterations (int, optional): [description]. Defaults to 10000.
+    """
     start_time = time.time()
     number_of_terms = [coeff_vec.shape[0] for coeff_vec in model(data)[3]]
     board = Tensorboard(number_of_terms, log_dir)  # initializing custom tb board
@@ -73,17 +111,21 @@ def train_optim(model, data, target, optimizer, sparsity_scheduler, log_dir=None
     # Training
     convergence = Convergence(**convergence_kwargs)
     print('| Iteration | Progress | Time remaining |     Loss |      MSE |      Reg |    L1 norm |')
-    for iteration in torch.arange(0, max_iterations + 1):
+    for iteration in np.arange(0, max_iterations + 1):
         # ================== Training Model ============================
         prediction, time_derivs, sparse_thetas, thetas, constraint_coeffs = model(data)
-        
-        MSE = torch.mean((prediction - target)**2, dim=0)  # loss per output
-        Reg = torch.stack([torch.mean((dt - theta @ coeff_vector)**2)
+
+        MSE_un = torch.sum((prediction - target)**2, dim=0)  # loss per output
+        Reg_un = torch.stack([torch.sum((dt - theta @ coeff_vector)**2)
                            for dt, theta, coeff_vector in zip(time_derivs, sparse_thetas, constraint_coeffs)])
+        
+        N = torch.tensor(prediction.shape[0], dtype=torch.float32)
+        MSE = 1 / N * MSE_un
+        Reg = 1 / N * Reg_un
+        #sigma = torch.exp(-model.loss_scale)
+        #loss = torch.sum(sigma * torch.cat([MSE, Reg])) + torch.sum(model.loss_scale)
+        loss = torch.sum(torch.exp(-model.loss_scale - torch.log(N) + torch.log(torch.cat([MSE_un, Reg_un])))) + torch.sum(model.loss_scale)
 
-
-        sigma = torch.exp(-model.s)
-        loss =  sigma[0] * MSE[0] + sigma[1] * Reg[0] + torch.sum(model.s)
 
         # Optimizer step
         optimizer.zero_grad()
@@ -101,11 +143,11 @@ def train_optim(model, data, target, optimizer, sparsity_scheduler, log_dir=None
             constraint_coeff_vectors = [torch.zeros(mask.size()).masked_scatter_(mask, coeff_vector.detach().squeeze())
                                         for mask, coeff_vector
                                         in zip(model.constraint.sparsity_masks, constraint_coeffs)]
-            unscaled_constraint_coeff_vectors = [torch.zeros(mask.size()).masked_scatter_(mask, coeff_vector.detach().squeeze()) / model.library.norm.squeeze()
-                                                 for mask, coeff_vector
-                                                 in zip(model.constraint.sparsity_masks, constraint_coeffs)]
+            unscaled_constraint_coeff_vectors = [torch.zeros(mask.size()).masked_scatter_(mask, coeff_vector.detach().squeeze()) / norm.squeeze()
+                                                 for mask, coeff_vector, norm
+                                                 in zip(model.constraint.sparsity_masks, constraint_coeffs, model.library.norms)]
 
-            board.write(iteration, loss, MSE, Reg, l1_norm, constraint_coeff_vectors, unscaled_constraint_coeff_vectors)
+            board.write(iteration, loss, MSE, Reg, l1_norm, constraint_coeff_vectors, unscaled_constraint_coeff_vectors, scale=model.loss_scale)
 
         # ================== Validation and sparsity =============
         # Updating sparsity and or convergence
@@ -114,7 +156,164 @@ def train_optim(model, data, target, optimizer, sparsity_scheduler, log_dir=None
             with torch.no_grad():
                 model.constraint.sparsity_masks = model.sparse_estimator(thetas, time_derivs)
                 sparsity_scheduler.reset()
-                print(model.constraint.sparsity_masks)
+                #print(model.constraint.sparsity_masks)
+
+        # Checking convergence
+        convergence(iteration, torch.sum(l1_norm))
+        if convergence.converged is True:
+            print('Algorithm converged. Stopping training.')
+            break
+
+    board.close()
+
+
+def train_MSE(model: DeepMoD,
+                    data: torch.Tensor,
+                    target: torch.Tensor,
+                    optimizer,
+                    sparsity_scheduler,
+                    log_dir: Optional[str] = None,
+                    max_iterations: int = 10000,
+                    **convergence_kwargs) -> None:
+    """[summary]
+
+    Args:
+        model (DeepMoD): [description]
+        data (torch.Tensor): [description]
+        target (torch.Tensor): [description]
+        optimizer ([type]): [description]
+        sparsity_scheduler ([type]): [description]
+        log_dir (Optional[str], optional): [description]. Defaults to None.
+        max_iterations (int, optional): [description]. Defaults to 10000.
+    """
+    start_time = time.time()
+    number_of_terms = [coeff_vec.shape[0] for coeff_vec in model(data)[3]]
+    board = Tensorboard(number_of_terms, log_dir)  # initializing custom tb board
+
+    # Training
+    convergence = Convergence(**convergence_kwargs)
+    print('| Iteration | Progress | Time remaining |     Loss |      MSE |      Reg |    L1 norm |')
+    for iteration in np.arange(0, max_iterations + 1):
+        # ================== Training Model ============================
+        prediction, time_derivs, sparse_thetas, thetas, constraint_coeffs = model(data)
+
+        MSE = torch.mean((prediction - target)**2, dim=0)  # loss per output
+        Reg = torch.stack([torch.mean((dt - theta @ coeff_vector)**2)
+                           for dt, theta, coeff_vector in zip(time_derivs, sparse_thetas, constraint_coeffs)])
+        
+        loss = torch.sum(torch.cat([MSE, Reg]))
+        
+        # Optimizer step
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # ====================== Logging =======================
+        # Write progress to command line and tensorboard
+        l1_norm = torch.stack([torch.sum(torch.abs(coeff_vector)) for coeff_vector in constraint_coeffs])
+        if iteration % 25 == 0:
+            progress(iteration, start_time, max_iterations, loss.item(),
+                     torch.sum(MSE).item(), torch.sum(Reg).item(), torch.sum(l1_norm).item())
+
+            # We pad the sparse vectors with zeros so they get written correctly)
+            constraint_coeff_vectors = [torch.zeros(mask.size()).masked_scatter_(mask, coeff_vector.detach().squeeze())
+                                        for mask, coeff_vector
+                                        in zip(model.constraint.sparsity_masks, constraint_coeffs)]
+            unscaled_constraint_coeff_vectors = [torch.zeros(mask.size()).masked_scatter_(mask, coeff_vector.detach().squeeze()) / norm.squeeze()
+                                                 for mask, coeff_vector, norm
+                                                 in zip(model.constraint.sparsity_masks, constraint_coeffs, model.library.norms)]
+
+            board.write(iteration, loss, MSE, Reg, l1_norm, constraint_coeff_vectors, unscaled_constraint_coeff_vectors, scale=model.loss_scale)
+
+        # ================== Validation and sparsity =============
+        # Updating sparsity and or convergence
+        sparsity_scheduler(iteration, torch.sum(l1_norm))
+        if sparsity_scheduler.apply_sparsity is True:
+            with torch.no_grad():
+                model.constraint.sparsity_masks = model.sparse_estimator(thetas, time_derivs)
+                sparsity_scheduler.reset()
+                #print(model.constraint.sparsity_masks)
+
+        # Checking convergence
+        convergence(iteration, torch.sum(l1_norm))
+        if convergence.converged is True:
+            print('Algorithm converged. Stopping training.')
+            break
+
+    board.close()
+
+
+def train_ALM(model: DeepMoD,
+                    data: torch.Tensor,
+                    target: torch.Tensor,
+                    optimizer,
+                    sparsity_scheduler,
+                    log_dir: Optional[str] = None,
+                    max_iterations: int = 10000,
+                    **convergence_kwargs) -> None:
+    """[summary]
+
+    Args:
+        model (DeepMoD): [description]
+        data (torch.Tensor): [description]
+        target (torch.Tensor): [description]
+        optimizer ([type]): [description]
+        sparsity_scheduler ([type]): [description]
+        log_dir (Optional[str], optional): [description]. Defaults to None.
+        max_iterations (int, optional): [description]. Defaults to 10000.
+    """
+    start_time = time.time()
+    number_of_terms = [coeff_vec.shape[0] for coeff_vec in model(data)[3]]
+    board = Tensorboard(number_of_terms, log_dir)  # initializing custom tb board
+
+    # Training
+    convergence = Convergence(**convergence_kwargs)
+    print('| Iteration | Progress | Time remaining |     Loss |      MSE |      Reg |    L1 norm |')
+    for iteration in np.arange(0, max_iterations + 1):
+        # ================== Training Model ============================
+        prediction, time_derivs, sparse_thetas, thetas, constraint_coeffs = model(data)
+
+        MSE = torch.mean((prediction - target)**2, dim=0)  # loss per output
+        Reg = torch.stack([torch.mean((dt - theta @ coeff_vector)**2)
+                           for dt, theta, coeff_vector in zip(time_derivs, sparse_thetas, constraint_coeffs)])
+        
+        g = time_derivs[0] - sparse_thetas[0] @ constraint_coeffs[0]
+        Lagrangian = 1/N * l.T @ g
+        PI = mu/2 * torch.mean(g**2)
+
+        sigma = torch.exp(-model.loss_scale)
+        loss = torch.sum(sigma * torch.cat([MSE, Reg])) + torch.sum(model.loss_scale)
+
+        # Optimizer step
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # ====================== Logging =======================
+        # Write progress to command line and tensorboard
+        l1_norm = torch.stack([torch.sum(torch.abs(coeff_vector)) for coeff_vector in constraint_coeffs])
+        if iteration % 25 == 0:
+            progress(iteration, start_time, max_iterations, loss.item(),
+                     torch.sum(MSE).item(), torch.sum(Reg).item(), torch.sum(l1_norm).item())
+
+            # We pad the sparse vectors with zeros so they get written correctly)
+            constraint_coeff_vectors = [torch.zeros(mask.size()).masked_scatter_(mask, coeff_vector.detach().squeeze())
+                                        for mask, coeff_vector
+                                        in zip(model.constraint.sparsity_masks, constraint_coeffs)]
+            unscaled_constraint_coeff_vectors = [torch.zeros(mask.size()).masked_scatter_(mask, coeff_vector.detach().squeeze()) / norm.squeeze()
+                                                 for mask, coeff_vector, norm
+                                                 in zip(model.constraint.sparsity_masks, constraint_coeffs, model.library.norms)]
+
+            board.write(iteration, loss, MSE, Reg, l1_norm, constraint_coeff_vectors, unscaled_constraint_coeff_vectors, scale=model.loss_scale)
+
+        # ================== Validation and sparsity =============
+        # Updating sparsity and or convergence
+        sparsity_scheduler(iteration, torch.sum(l1_norm))
+        if sparsity_scheduler.apply_sparsity is True:
+            with torch.no_grad():
+                model.constraint.sparsity_masks = model.sparse_estimator(thetas, time_derivs)
+                sparsity_scheduler.reset()
+                #print(model.constraint.sparsity_masks)
 
         # Checking convergence
         convergence(iteration, torch.sum(l1_norm))
