@@ -52,4 +52,4 @@ for sparsity_start_epoch in starting_points:
         # Running model
         sparsity_scheduler = Periodic(initial_epoch=sparsity_start_epoch, periodicity=100) # Defining when to apply sparsity
         optimizer = torch.optim.Adam(model.parameters(), betas=(0.99, 0.99), amsgrad=True) # Defining optimizer
-        train(model, X_train, y_train, optimizer, sparsity_scheduler, log_dir=f'runs/start_{sparsity_start_epoch}_run_{run}/', max_iterations=3000) # Running
+        train(model, X_train, y_train, optimizer, sparsity_scheduler, log_dir=f'runs/SIREN_start/start_{sparsity_start_epoch}_run_{run}/', max_iterations=500) # Running

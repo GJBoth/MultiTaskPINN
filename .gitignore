@@ -52,3 +52,9 @@ MANIFEST
 .mypy_cache/
 
 runs/
+
+src/multitaskpinn/model/.ipynb_checkpoints/
+
+experiments/start_SIREN/.ipynb_checkpoints/
+
+src/multitaskpinn/training/.ipynb_checkpoints/
