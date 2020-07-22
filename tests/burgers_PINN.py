@@ -7,8 +7,8 @@ from multitaskpinn.model.deepmod import DeepMoD
 from multitaskpinn.model.func_approx import NN
 from multitaskpinn.model.library import Library1D
 from multitaskpinn.model.constraint import LeastSquares
-from multitaskpinn.model.sparse_estimators import Clustering, Threshold
-from multitaskpinn.training import train_multitask, train_MSE
+from multitaskpinn.model.sparse_estimators import PINN
+from multitaskpinn.training import train_multitask, train_MSE, train
 from multitaskpinn.training.sparsity_scheduler import Periodic
 from phimal_utilities.data import Dataset
 from phimal_utilities.data.burgers import BurgersDelta
@@ -24,24 +24,24 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # Making data
-v = 0.1
+v = 0.2
 A = 1.0
 x = np.linspace(-3, 4, 100)
 t = np.linspace(0.5, 5.0, 50)
 
 x_grid, t_grid = np.meshgrid(x, t, indexing='ij')
 dataset = Dataset(BurgersDelta, v=v, A=A)
-X_train, y_train = dataset.create_dataset(x_grid.reshape(-1, 1), t_grid.reshape(-1, 1), n_samples=1000, noise=0.4)
+X_train, y_train = dataset.create_dataset(x_grid.reshape(-1, 1), t_grid.reshape(-1, 1), n_samples=1000, noise=0.2)
 
 # Configuring model
 network = NN(2, [30, 30, 30, 30, 30], 1)  # Function approximator
-library = Library1D(poly_order=2, diff_order=3) # Library function
-estimator = Clustering() # Sparse estimator 
+library = Library1D(poly_order=2, diff_order=2) # Library function
+estimator = PINN([2, 4]) # active terms are 2 and 5
 constraint = LeastSquares() # How to constrain
 model = DeepMoD(network, library, estimator, constraint) # Putting it all in the model
 
 # Running model
-sparsity_scheduler = Periodic(initial_epoch=25000, periodicity=100) # Defining when to apply sparsity
+sparsity_scheduler = Periodic(initial_epoch=0, periodicity=1) # Defining when to apply sparsity
 optimizer = torch.optim.Adam(model.parameters(), betas=(0.99, 0.999), amsgrad=True) # Defining optimizer
-train_MSE(model, X_train, y_train, optimizer, sparsity_scheduler, max_iterations=20000, patience=500, delta=0.0001) # Running
+train_multitask(model, X_train, y_train, optimizer, sparsity_scheduler, max_iterations=50000, patience=500, delta=0.0) # Running
 print(model.loss_scale)

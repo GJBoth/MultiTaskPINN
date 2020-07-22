@@ -1,14 +1,24 @@
 import numpy as np
 import torch
 from torch.autograd import grad
-from itertools import combinations, product
+from itertools import combinations
 from functools import reduce
-from deepymod_torch import Library
+from .deepmod import Library
+from typing import Tuple
+from ..utils.types import TensorList
 
 
 # ==================== Library helper functions =======================
-def library_poly(prediction, max_order):
-    # Calculate the polynomes of u
+def library_poly(prediction: torch.Tensor, max_order: int) -> torch.Tensor:
+    """[summary]
+
+    Args:
+        prediction (torch.Tensor): [description]
+        max_order (int): [description]
+
+    Returns:
+        torch.Tensor: [description]
+    """
     u = torch.ones_like(prediction)
     for order in np.arange(1, max_order+1):
         u = torch.cat((u, u[:, order-1:order] * prediction), dim=1)
@@ -16,7 +26,17 @@ def library_poly(prediction, max_order):
     return u
 
 
-def library_deriv(data, prediction, max_order):
+def library_deriv(data: torch.Tensor, prediction: torch.Tensor, max_order: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    """[summary]
+
+    Args:
+        data (torch.Tensor): [description]
+        prediction (torch.Tensor): [description]
+        max_order (int): [description]
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: [description]
+    """
     dy = grad(prediction, data, grad_outputs=torch.ones_like(prediction), create_graph=True)[0]
     time_deriv = dy[:, 0:1]
 
@@ -26,29 +46,40 @@ def library_deriv(data, prediction, max_order):
         du = torch.cat((torch.ones_like(time_deriv), dy[:, 1:2]), dim=1)
         if max_order > 1:
             for order in np.arange(1, max_order):
-                du = torch.cat((du, grad(du[:, order:order+1], data, grad_outputs=torch.ones_like(prediction), create_graph=True)[0][:, 1:2]), dim=1)
+                du = torch.cat((du, grad(du[:, order:order+1], data,
+                                grad_outputs=torch.ones_like(prediction), create_graph=True)[0][:, 1:2]), dim=1)
 
     return time_deriv, du
 
 
 # ========================= Actual library functions ========================
 class Library1D(Library):
-    ''' Calculates library consisting of m-th order polynomials,
-        n-th order derivatives and their cross terms.
-    '''
-    def __init__(self, poly_order, diff_order):
+    """[summary]
+
+    Args:
+        Library ([type]): [description]
+    """
+    def __init__(self, poly_order: int, diff_order: int) -> None:
         super().__init__()
         self.poly_order = poly_order
         self.diff_order = diff_order
 
-    def library(self, input):
+    def library(self, input: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[TensorList, TensorList]:
+        """[summary]
+
+        Args:
+            input (Tuple[torch.Tensor, torch.Tensor]): [description]
+
+        Returns:
+            Tuple[TensorList, TensorList]: [description]
+        """
         prediction, data = input
         poly_list = []
         deriv_list = []
         time_deriv_list = []
 
         # Creating lists for all outputs
-        for output in torch.arange(prediction.shape[1]):
+        for output in np.arange(prediction.shape[1]):
             time_deriv, du = library_deriv(data, prediction[:, output:output+1], self.diff_order)
             u = library_poly(prediction[:, output:output+1], self.poly_order)
 
@@ -61,25 +92,40 @@ class Library1D(Library):
 
         # Calculating theta
         if len(poly_list) == 1:
-            theta = torch.matmul(poly_list[0][:, :, None], deriv_list[0][:, None, :]).view(samples, total_terms)  # If we have a single output, we simply calculate and flatten matrix product between polynomials and derivatives to get library
+            # If we have a single output, we simply calculate and flatten matrix product
+            # between polynomials and derivatives to get library
+            theta = torch.matmul(poly_list[0][:, :, None], deriv_list[0][:, None, :]).view(samples, total_terms)
         else:
             theta_uv = reduce((lambda x, y: (x[:, :, None] @ y[:, None, :]).view(samples, -1)), poly_list)
-            theta_dudv = torch.cat([torch.matmul(du[:, :, None], dv[:, None, :]).view(samples, -1)[:, 1:] for du, dv in combinations(deriv_list, 2)], 1)  # calculate all unique combinations of derivatives
-            # theta_udu = torch.cat([torch.matmul(u[:, 1:, None], du[:, None, 1:]).view(samples, (poly_list[0].shape[1]-1) * (deriv_list[0].shape[1]-1)) for u, dv in product(poly_list, deriv_list)], 1)  # calculate all unique products of polynomials and derivatives
-            # theta = torch.cat([theta_uv, theta_dudv, theta_udu], dim=1)
+            # calculate all unique combinations of derivatives
+            theta_dudv = torch.cat([torch.matmul(du[:, :, None], dv[:, None, :]).view(samples, -1)[:, 1:]
+                                    for du, dv in combinations(deriv_list, 2)], 1)
             theta = torch.cat([theta_uv, theta_dudv], dim=1)
 
-        return time_deriv_list, theta
+        return time_deriv_list, [theta]
 
 
 class Library2D(Library):
-    def __init__(self, poly_order, diff_order):
+    """[summary]
+
+    Args:
+        Library ([type]): [description]
+    """
+    def __init__(self, poly_order: int, diff_order: int) -> None:
         super().__init__()
         self.poly_order = poly_order
         self.diff_order = diff_order
 
-    def library(self, input):
-        '''Constructs a library graph in 1D. Library config is dictionary with required terms. '''
+    def library(self, input: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[TensorList, TensorList]:
+        """[summary]
+
+        Args:
+            input (Tuple[torch.Tensor, torch.Tensor]): [description]
+
+        Returns:
+            Tuple[TensorList, TensorList]: [description]
+        """
+
         prediction, data = input
         # Polynomial
 
@@ -103,4 +149,4 @@ class Library2D(Library):
         # Bringing it together
         theta = torch.matmul(u[:, :, None], du[:, None, :]).view(samples, -1)
 
-        return [u_t], theta
+        return [u_t], [theta]
