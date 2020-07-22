@@ -9,7 +9,7 @@ from pysindy.optimizers import STLSQ
 from sklearn.linear_model import LassoCV
 from sklearn.model_selection import train_test_split
 from sklearn.base import BaseEstimator
-from typing import List
+
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)  # To silence annoying pysindy warnings
 
@@ -177,27 +177,3 @@ class PDEFIND():
         optimizer.fit(X_train, y_train)
 
         return optimizer.coef_
-
-
-class PINN(Estimator):
-    def __init__(self, active_terms: List[int]) -> None:
-        super().__init__()
-        self.active_terms = active_terms
-        self.mask = None
-
-    def fit(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """[summary]
-
-        Args:
-            X (np.ndarray): [description]
-            y (np.ndarray): [description]
-
-        Returns:
-            np.ndarray: [description]
-        """
-        if self.mask is None:
-            mask = np.zeros(X.shape[1])
-            for term in self.active_terms:
-                mask[term] = 1.0
-            self.mask = mask
-        return self.mask
