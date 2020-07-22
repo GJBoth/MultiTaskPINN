@@ -72,7 +72,7 @@ def train(model: DeepMoD,
             with torch.no_grad():
                 model.constraint.sparsity_masks = model.sparse_estimator(thetas, time_derivs)
                 sparsity_scheduler.reset()
-                print(model.sparsity_masks)
+                #print(model.sparsity_masks)
 
         # Checking convergence
         convergence(iteration, torch.sum(l1_norm))
