@@ -59,8 +59,8 @@ class Library1D(Library):
     Args:
         Library ([type]): [description]
     """
-    def __init__(self, poly_order: int, diff_order: int) -> None:
-        super().__init__()
+    def __init__(self, poly_order: int, diff_order: int, norm_time=False) -> None:
+        super().__init__(norm_time)
         self.poly_order = poly_order
         self.diff_order = diff_order
 
