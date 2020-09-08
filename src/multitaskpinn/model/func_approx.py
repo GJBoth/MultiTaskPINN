@@ -12,6 +12,7 @@ class NN(nn.Module):
     """
     def __init__(self, n_in: int, n_hidden: List[int], n_out: int) -> None:
         super().__init__()
+        self.architecture = [n_in] + n_hidden + [n_out] 
         self.network = self.build_network(n_in, n_hidden, n_out)
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:

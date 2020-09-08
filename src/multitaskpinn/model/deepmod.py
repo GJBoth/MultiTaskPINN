@@ -135,6 +135,8 @@ class DeepMoD(nn.Module):
         self.sparse_estimator = sparsity_estimator
         self.constraint = constraint
 
+        self.s = torch.nn.Parameter(torch.full((self.func_approx.architecture[-1], 2), -1.)) # for multiscale training
+
     def forward(self, input: torch.Tensor) -> Tuple[TensorList, TensorList, TensorList]:
         """[summary]
 

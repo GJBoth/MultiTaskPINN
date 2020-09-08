@@ -129,15 +129,6 @@ def train_multitask(model: DeepMoD,
     data_train, data_test = torch.split(data, [n_train, n_test], dim=0)
     target_train, target_test = torch.split(target, [n_train, n_test], dim=0)
     
-    # Adding weights for loss
-    try:
-        _ = model.s
-    except:
-        model.s = torch.full((target.shape[1], 2), -1, dtype=torch.float32, requires_grad=True)
-        optimizer.add_param_group({"params": model.s, "lr": 5e-3}) 
-        #model.s.to(target.device) # to do, move to gpu?
-
-
     # Training
     convergence = Convergence(**convergence_kwargs)
     print('| Iteration | Progress | Time remaining |     Loss |      MSE |      Reg |    L1 norm |')
@@ -148,8 +139,7 @@ def train_multitask(model: DeepMoD,
         MSE = torch.mean((prediction - target_train)**2, dim=0)  # loss per output
         Reg = torch.stack([torch.mean((dt - theta @ coeff_vector)**2)
                            for dt, theta, coeff_vector in zip(time_derivs, thetas, model.constraint_coeffs(scaled=False, sparse=True))])
-        s_capped = torch.min(torch.max(model.s, torch.tensor([-10., -10.])), torch.tensor([10., 10.]))
-        loss = torch.sum(torch.exp(-s_capped[:, 0]) * MSE + torch.exp(-s_capped[:, 1]) * Reg + torch.sum(s_capped)) 
+        loss = torch.sum(torch.exp(-model.s[:, 0]) * MSE + torch.exp(-model.s[:, 1]) * Reg + torch.sum(model.s)) 
 
         # Optimizer step
         optimizer.zero_grad()
@@ -165,7 +155,7 @@ def train_multitask(model: DeepMoD,
                 MSE_test = torch.mean((prediction_test - target_test)**2, dim=0)  # loss per output
                 Reg_test = torch.stack([torch.mean((dt - theta @ coeff_vector)**2)
                            for dt, theta, coeff_vector in zip(time_derivs_test, thetas_test, model.constraint_coeffs(scaled=False, sparse=True))])
-                loss_test = torch.sum(torch.exp(-s_capped[:, 0]) * MSE_test + torch.exp(-s_capped[:, 1]) * Reg_test + torch.sum(s_capped)) 
+                loss_test = torch.sum(torch.exp(-model.s[:, 0]) * MSE_test + torch.exp(-model.s[:, 1]) * Reg_test + torch.sum(model.s)) 
             
             # ====================== Logging =======================
             _ = model.sparse_estimator(thetas, time_derivs) # calculating l1 adjusted coeffs but not setting mask
