@@ -295,3 +295,123 @@ def train_multitask_capped(model: DeepMoD,
     else:
         path = join(log_dir, 'model.pt')
     torch.save(model.state_dict(), path)
+
+def train_gradnorm(model: DeepMoD,
+          data: torch.Tensor,
+          target: torch.Tensor,
+          optimizer,
+          sparsity_scheduler,
+          alpha,
+          test = 'mse',
+          split: float = 0.8,
+          log_dir: Optional[str] = None,
+          max_iterations: int = 10000,
+          write_iterations: int = 25,
+          **convergence_kwargs) -> None:
+    """[summary]
+
+    Args:
+        model (DeepMoD): [description]
+        data (torch.Tensor): [description]
+        target (torch.Tensor): [description]
+        optimizer ([type]): [description]
+        sparsity_scheduler ([type]): [description]
+        log_dir (Optional[str], optional): [description]. Defaults to None.
+        max_iterations (int, optional): [description]. Defaults to 10000.
+    """
+    start_time = time.time()
+    board = Tensorboard(log_dir)  # initializing tb board
+
+    # Splitting data, assumes data is already randomized
+    n_train = int(split * data.shape[0])
+    n_test = data.shape[0] - n_train
+    data_train, data_test = torch.split(data, [n_train, n_test], dim=0)
+    target_train, target_test = torch.split(target, [n_train, n_test], dim=0)
+
+    # Training
+    convergence = Convergence(**convergence_kwargs)
+    print('| Iteration | Progress | Time remaining |     Loss |      MSE |      Reg |    L1 norm |')
+    for iteration in np.arange(0, max_iterations + 1):
+        # ================== Training Model ============================
+        prediction, time_derivs, thetas = model(data_train)
+
+        MSE = torch.mean((prediction - target_train)**2, dim=0)  # loss per output
+        Reg = torch.cat([torch.mean((dt - theta @ coeff_vector)**2, dim=0)
+                           for dt, theta, coeff_vector in zip(time_derivs, thetas, model.constraint_coeffs(scaled=False, sparse=True))])
+        task_loss = (torch.exp(model.weights) * torch.stack((MSE, Reg), axis=1)).flatten() # weighted losses
+        loss = torch.sum(task_loss)
+
+        if iteration == 0: # Getting initial loss
+            ini_loss = task_loss.data
+        if torch.any(task_loss.data > ini_loss):
+            ini_loss[task_loss.data > ini_loss] = task_loss.data[task_loss.data > ini_loss]
+
+        # Getting original grads
+        optimizer.zero_grad()
+        loss.backward(retain_graph=True)
+        model.weights.grad.data = model.weights.grad.data * 0.0 # setting weight grads to zero
+
+        # Getting Grads to normalize
+        G = torch.tensor([torch.norm(torch.autograd.grad(loss_i, list(model.parameters())[-2], retain_graph=True, create_graph=True)[0], 2) for loss_i in task_loss]).to(data.device)
+        G_mean = torch.mean(G)  
+
+        # Calculating relative losses
+        rel_loss = task_loss / ini_loss
+        inv_train_rate = rel_loss / torch.mean(rel_loss)
+
+        # Calculating grad norm loss
+        grad_norm_loss = torch.sum(torch.abs(G - G_mean * inv_train_rate ** alpha))
+
+        # Setting grads
+        model.weights.grad = torch.autograd.grad(grad_norm_loss, model.weights)[0]
+    
+        # do a step with the optimizer
+        optimizer.step()
+        
+        # renormalize
+        normalize_coeff = task_loss.shape[0] / torch.sum(model.weights)
+        model.weights.data = torch.log(torch.exp(model.weights.data) * normalize_coeff)
+        
+        if iteration % write_iterations == 0:
+            # ================== Validation costs ================
+            prediction_test, coordinates = model.func_approx(data_test)
+            time_derivs_test, thetas_test = model.library((prediction_test, coordinates))
+            with torch.no_grad():
+                MSE_test = torch.mean((prediction_test - target_test)**2, dim=0)  # loss per output
+                Reg_test = torch.stack([torch.mean((dt - theta @ coeff_vector)**2)
+                           for dt, theta, coeff_vector in zip(time_derivs_test, thetas_test, model.constraint_coeffs(scaled=False, sparse=True))])
+                loss_test = model.weights @ torch.stack((MSE, Reg), axis=0)
+            
+            # ====================== Logging =======================
+            _ = model.sparse_estimator(thetas, time_derivs) # calculating l1 adjusted coeffs but not setting mask
+            estimator_coeff_vectors = model.estimator_coeffs()
+            l1_norm = torch.sum(torch.abs(torch.cat(model.constraint_coeffs(sparse=True, scaled=True), dim=1)), dim=0)
+            progress(iteration, start_time, max_iterations, loss.item(),
+                     torch.sum(MSE).item(), torch.sum(Reg).item(), torch.sum(l1_norm).item())
+            board.write(iteration, loss, MSE, Reg, l1_norm, model.constraint_coeffs(sparse=True, scaled=True), model.constraint_coeffs(sparse=True, scaled=False), estimator_coeff_vectors, MSE_test=MSE_test, Reg_test=Reg_test, loss_test=loss_test, w=model.weights)
+            
+            # ================== Sparsity update =============
+            # Updating sparsity and or convergence
+            #sparsity_scheduler(iteration, l1_norm)
+            if iteration % write_iterations == 0:
+                if test == 'mse':
+                    sparsity_scheduler(iteration, torch.sum(MSE_test), model, optimizer)
+                else:
+                    sparsity_scheduler(iteration, loss_test, model, optimizer) 
+                    
+                if sparsity_scheduler.apply_sparsity is True:
+                    with torch.no_grad():
+                        model.constraint.sparsity_masks = model.sparse_estimator(thetas, time_derivs)
+                        sparsity_scheduler.reset()
+
+            # ================= Checking convergence
+            convergence(iteration, torch.sum(l1_norm))
+            if convergence.converged is True:
+                print('Algorithm converged. Stopping training.')
+                break
+    board.close()
+    if log_dir is None: 
+        path = 'model.pt'
+    else:
+        path = join(log_dir, 'model.pt')
+    torch.save(model.state_dict(), path)
