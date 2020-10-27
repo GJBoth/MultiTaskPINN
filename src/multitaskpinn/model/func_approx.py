@@ -12,7 +12,6 @@ class NN(nn.Module):
     """
     def __init__(self, n_in: int, n_hidden: List[int], n_out: int) -> None:
         super().__init__()
-        self.architecture = [n_in] + n_hidden + [n_out] 
         self.network = self.build_network(n_in, n_hidden, n_out)
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
@@ -63,7 +62,6 @@ class SineLayer(nn.Module):
         self.linear = nn.Linear(in_features, out_features)
 
         self.init_weights()
-     
 
     def init_weights(self):
         """[summary]
@@ -96,7 +94,6 @@ class Siren(nn.Module):
     def __init__(self, n_in: int, n_hidden: List[int], n_out: int, first_omega_0: float = 30., hidden_omega_0: float = 30.):
         super().__init__()
         self.network = self.build_network(n_in, n_hidden, n_out, first_omega_0, hidden_omega_0)
-        self.architecture = [n_in] + n_hidden + [n_out] 
 
     def forward(self, input: torch.Tensor):
         """[summary]
