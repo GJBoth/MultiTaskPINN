@@ -161,12 +161,18 @@ class DeepMoD(nn.Module):
                  function_approximator: torch.nn.Sequential,
                  library: Library,
                  sparsity_estimator: Estimator,
-                 constraint: Constraint) -> None:
+                 constraint: Constraint,
+                 n_terms=None) -> None:
         super().__init__()
         self.func_approx = function_approximator
         self.library = library
         self.sparse_estimator = sparsity_estimator
         self.constraint = constraint
+
+        self.t = torch.nn.Parameter(torch.zeros(1)) # we initialize these when training
+        self.b = torch.nn.Parameter(torch.zeros(1))
+        if n_terms is not None:
+            self.a  = torch.nn.Parameter(torch.zeros(n_terms))
 
     def forward(self, input: torch.Tensor) -> Tuple[TensorList, TensorList, TensorList]:
         """[summary]
