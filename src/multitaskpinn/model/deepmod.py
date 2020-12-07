@@ -20,12 +20,14 @@ class Constraint(nn.Module, metaclass=ABCMeta):
     Args:
         nn (PyTorch Class): Module of the function approximator, typically a neural network. 
     """
+
     def __init__(self) -> None:
         super().__init__()
         self.sparsity_masks: TensorList = None
 
-        
-    def forward(self, input: Tuple[TensorList, TensorList]) -> Tuple[TensorList, TensorList]:
+    def forward(
+        self, input: Tuple[TensorList, TensorList]
+    ) -> Tuple[TensorList, TensorList]:
         """Updates the coefficient vector for a given estimation of the library function and time derivatives.  
 
         Args:
@@ -34,11 +36,13 @@ class Constraint(nn.Module, metaclass=ABCMeta):
         time_derivs, thetas = input
 
         if self.sparsity_masks is None:
-            self.sparsity_masks = [torch.ones(theta.shape[1], dtype=torch.bool).to(theta.device) for theta in thetas]
+            self.sparsity_masks = [
+                torch.ones(theta.shape[1], dtype=torch.bool).to(theta.device)
+                for theta in thetas
+            ]
 
         sparse_thetas = self.apply_mask(thetas)
         self.coeff_vectors = self.calculate_coeffs(sparse_thetas, time_derivs)
-
 
     def apply_mask(self, thetas: TensorList) -> TensorList:
         """ Function that applies the sparsity mask to the library function.  
@@ -49,11 +53,16 @@ class Constraint(nn.Module, metaclass=ABCMeta):
         Returns:
             TensorList: The sparse version of the library function. 
         """
-        sparse_thetas = [theta[:, sparsity_mask] for theta, sparsity_mask in zip(thetas, self.sparsity_masks)]
+        sparse_thetas = [
+            theta[:, sparsity_mask]
+            for theta, sparsity_mask in zip(thetas, self.sparsity_masks)
+        ]
         return sparse_thetas
 
     @abstractmethod
-    def calculate_coeffs(self, sparse_thetas: TensorList, time_derivs: TensorList) -> TensorList:
+    def calculate_coeffs(
+        self, sparse_thetas: TensorList, time_derivs: TensorList
+    ) -> TensorList:
         """Abstract method to compute the coefficients for the library.
         Args:
             sparse_thetas (TensorList): List of sparsified library functions, one for every output. 
@@ -65,12 +74,13 @@ class Constraint(nn.Module, metaclass=ABCMeta):
         pass
 
 
-class Estimator(nn.Module,  metaclass=ABCMeta):
+class Estimator(nn.Module, metaclass=ABCMeta):
     """Abstract class implementing the sparsity estimator set to the function approximator. 
 
     Args:
         nn (PyTorch Class): Module of the function approximator, typically a neural network. 
     """
+
     def __init__(self) -> None:
         super().__init__()
         self.coeff_vectors = None
@@ -85,16 +95,28 @@ class Estimator(nn.Module,  metaclass=ABCMeta):
         Returns:
             sparsity_mask (TensorList): A list of sparsity masks, one for every output.  
         """
-        
+
         # we first normalize theta and the time deriv
         with torch.no_grad():
-            normed_time_derivs = [(time_deriv / torch.norm(time_deriv)).detach().cpu().numpy() for time_deriv in time_derivs]
-            normed_thetas = [(theta / torch.norm(theta, dim=0, keepdim=True)).detach().cpu().numpy() for theta in thetas]
-        
-        self.coeff_vectors = [self.fit(theta, time_deriv.squeeze())[:, None]
-                              for theta, time_deriv in zip(normed_thetas, normed_time_derivs)]
-        sparsity_masks = [torch.tensor(coeff_vector != 0.0, dtype=torch.bool).squeeze().to(thetas[0].device) # move to gpu if required
-                          for coeff_vector in self.coeff_vectors]
+            normed_time_derivs = [
+                (time_deriv / torch.norm(time_deriv)).detach().cpu().numpy()
+                for time_deriv in time_derivs
+            ]
+            normed_thetas = [
+                (theta / torch.norm(theta, dim=0, keepdim=True)).detach().cpu().numpy()
+                for theta in thetas
+            ]
+
+        self.coeff_vectors = [
+            self.fit(theta, time_deriv.squeeze())[:, None]
+            for theta, time_deriv in zip(normed_thetas, normed_time_derivs)
+        ]
+        sparsity_masks = [
+            torch.tensor(coeff_vector != 0.0, dtype=torch.bool)
+            .squeeze()
+            .to(thetas[0].device)  # move to gpu if required
+            for coeff_vector in self.coeff_vectors
+        ]
 
         return sparsity_masks
 
@@ -117,11 +139,14 @@ class Library(nn.Module):
     Args:
         nn (PyTorch Class): Module of the function approximator, typically a neural network. 
     """
+
     def __init__(self) -> None:
-        super().__init__()  
+        super().__init__()
         self.norms = None
 
-    def forward(self, input: Tuple[TensorList, TensorList]) -> Tuple[TensorList, TensorList]:
+    def forward(
+        self, input: Tuple[TensorList, TensorList]
+    ) -> Tuple[TensorList, TensorList]:
         """Compute the library (time derivatives and thetas) given a dataset
 
         Args:
@@ -132,11 +157,18 @@ class Library(nn.Module):
             Tuple[TensorList, TensorList]: The time derivatives and thetas
         """
         time_derivs, thetas = self.library(input)
-        self.norms = [(torch.norm(time_deriv) / torch.norm(theta, dim=0, keepdim=True)).detach().squeeze() for time_deriv, theta in zip(time_derivs, thetas)]
+        self.norms = [
+            (torch.norm(time_deriv) / torch.norm(theta, dim=0, keepdim=True))
+            .detach()
+            .squeeze()
+            for time_deriv, theta in zip(time_derivs, thetas)
+        ]
         return time_derivs, thetas
 
     @abstractmethod
-    def library(self, input: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[TensorList, TensorList]: 
+    def library(
+        self, input: Tuple[torch.Tensor, torch.Tensor]
+    ) -> Tuple[TensorList, TensorList]:
         """Abstract method that should compute the library:
         
         Args:
@@ -157,22 +189,25 @@ class DeepMoD(nn.Module):
     Args:
         nn (PyTorch Class): Module of the function approximator, typically a neural network. 
     """
-    def __init__(self,
-                 function_approximator: torch.nn.Sequential,
-                 library: Library,
-                 sparsity_estimator: Estimator,
-                 constraint: Constraint,
-                 n_terms=None) -> None:
+
+    def __init__(
+        self,
+        function_approximator: torch.nn.Sequential,
+        library: Library,
+        sparsity_estimator: Estimator,
+        constraint: Constraint,
+        n_terms=None,
+    ) -> None:
         super().__init__()
         self.func_approx = function_approximator
         self.library = library
         self.sparse_estimator = sparsity_estimator
         self.constraint = constraint
 
-        self.t = torch.nn.Parameter(torch.zeros(1)) # we initialize these when training
+        self.t = torch.nn.Parameter(torch.zeros(1))  # we initialize these when training
         self.b = torch.nn.Parameter(torch.zeros(1))
         if n_terms is not None:
-            self.a  = torch.nn.Parameter(torch.zeros(n_terms))
+            self.a = torch.nn.Parameter(torch.zeros(n_terms))
 
     def forward(self, input: torch.Tensor) -> Tuple[TensorList, TensorList, TensorList]:
         """[summary]
@@ -214,9 +249,16 @@ class DeepMoD(nn.Module):
         """
         coeff_vectors = self.constraint.coeff_vectors
         if scaled:
-            coeff_vectors = [coeff / norm[:, None] for coeff, norm, mask in zip(coeff_vectors, self.library.norms, self.sparsity_masks)]
+            coeff_vectors = [
+                coeff / norm[:, None]
+                for coeff, norm, mask in zip(
+                    coeff_vectors, self.library.norms, self.sparsity_masks
+                )
+            ]
         if sparse:
-            coeff_vectors = [sparsity_mask[:, None] * coeff for sparsity_mask, coeff in zip(self.sparsity_masks, coeff_vectors)]
+            coeff_vectors = [
+                sparsity_mask[:, None] * coeff
+                for sparsity_mask, coeff in zip(self.sparsity_masks, coeff_vectors)
+            ]
         return coeff_vectors
-
 
